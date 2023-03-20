@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -134,6 +135,9 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  for(int i=0;i<NVMA;i++) {
+    p->vmas[i].valid = 0;
+  }
   return p;
 }
 
@@ -296,6 +300,13 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  for(i = 0; i < NVMA; i++) {
+    struct vma *v = &p->vmas[i];
+    if(v->valid) {
+      np->vmas[i] = *v;
+      filedup(v->f);
+    }
+  }
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -343,7 +354,21 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
-
+  
+  for(int i=0;i<NVMA;++i)
+  {
+    struct vma *v=&p->vmas[i];
+    if(v->valid)
+    {
+      if(v->flags&MAP_SHARED)
+      {
+        filewrite(v->f,v->vastart,v->sz);
+      }
+      uvmunmap(p->pagetable,v->vastart,(v->sz)/PGSIZE,0);
+      fileclose(v->f);
+      v->valid=0;
+    }
+  }
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
     if(p->ofile[fd]){
